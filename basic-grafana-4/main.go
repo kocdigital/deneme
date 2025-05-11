@@ -35,22 +35,27 @@ func NewProxy(rawUrl string) (*httputil.ReverseProxy, error) {
 	proxy.ModifyResponse = func(r *http.Response) error {
 		// Add a response header with exact capitalization from the screenshot
 		r.Header.Set("X-Debug-Response", "Some Value")
-		
-			// Handle cookies to make sure paths and domains are correct
-		for _, cookie := range r.Cookies() {
-			// Fix cookie paths to include /grafana prefix if needed
-			if cookie.Path == "/" || strings.HasPrefix(cookie.Path, "/") {
-				cookie.Path = "/grafana" + cookie.Path
+
+		// --- Properly handle Set-Cookie headers ---
+		setCookies := r.Header["Set-Cookie"]
+		newSetCookies := make([]string, 0, len(setCookies))
+		for _, cookieHeader := range setCookies {
+			// Rewrite Path attribute in each Set-Cookie header
+			parts := strings.Split(cookieHeader, ";")
+			for i, part := range parts {
+				trimmed := strings.TrimSpace(part)
+				if strings.HasPrefix(strings.ToLower(trimmed), "path=") {
+					// Always set path to /grafana
+					parts[i] = " Path=/grafana"
+				}
 			}
-			
-			// Make sure cookie domain matches our proxy's domain if needed
-			// This is optional and depends on your setup
-			// cookie.Domain = "your-proxy-domain.com"
-			
-			// Update the cookie in the response
-			r.Header.Set("Set-Cookie", cookie.String())
+			newSetCookies = append(newSetCookies, strings.Join(parts, ";"))
 		}
-		
+		if len(newSetCookies) > 0 {
+			r.Header["Set-Cookie"] = newSetCookies
+		}
+		// --- End cookie handling ---
+
 		// Only modify HTML responses
 		contentType := r.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text/html") {
