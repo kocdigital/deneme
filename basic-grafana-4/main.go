@@ -36,6 +36,21 @@ func NewProxy(rawUrl string) (*httputil.ReverseProxy, error) {
 		// Add a response header with exact capitalization from the screenshot
 		r.Header.Set("X-Debug-Response", "Some Value")
 		
+			// Handle cookies to make sure paths and domains are correct
+		for _, cookie := range r.Cookies() {
+			// Fix cookie paths to include /grafana prefix if needed
+			if cookie.Path == "/" || strings.HasPrefix(cookie.Path, "/") {
+				cookie.Path = "/grafana" + cookie.Path
+			}
+			
+			// Make sure cookie domain matches our proxy's domain if needed
+			// This is optional and depends on your setup
+			// cookie.Domain = "your-proxy-domain.com"
+			
+			// Update the cookie in the response
+			r.Header.Set("Set-Cookie", cookie.String())
+		}
+		
 		// Only modify HTML responses
 		contentType := r.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text/html") {
@@ -50,7 +65,7 @@ func NewProxy(rawUrl string) (*httputil.ReverseProxy, error) {
 			// Replace the appSubUrl empty string with the specified path that includes /grafana
 			modifiedBody := bytes.Replace(
 				bodyBytes,
-				[]byte(`"appSubUrl":""`),
+				[]byte(`"appSubUrl":"/grafana"`),
 				[]byte(`"appSubUrl":"/k8s/clusters/c-m-8dbg2lrc/api/v1/namespaces/default/services/http:golang:8080/proxy/grafana"`),
 				-1,
 			)
@@ -59,13 +74,21 @@ func NewProxy(rawUrl string) (*httputil.ReverseProxy, error) {
 				[]byte(`"/avatar/`),
 				[]byte(`"avatar/`),
 				-1,
-				)
+			)
 			
 			// Also fix other URLs that might be affected by the subpath
 			modifiedBody = bytes.Replace(
 				modifiedBody,
 				[]byte(`href="/"`),
 				[]byte(`href="/grafana/"`),
+				-1,
+			)
+			
+				// Handle client-side cookie manipulation if needed
+			modifiedBody = bytes.Replace(
+				modifiedBody,
+				[]byte(`document.cookie="`),
+				[]byte(`document.cookie="path=/grafana; `),
 				-1,
 			)
 			
@@ -80,7 +103,40 @@ func NewProxy(rawUrl string) (*httputil.ReverseProxy, error) {
 		return nil
 	}
 
+	// Add custom transport to handle cookies in redirects if needed
+	originalTransport := proxy.Transport
+	if originalTransport == nil {
+		originalTransport = http.DefaultTransport
+	}
+	proxy.Transport = &customTransport{
+		originalTransport: originalTransport,
+	}
+
 	return proxy, nil
+}
+
+// Custom transport to handle cookies in redirects
+type customTransport struct {
+	originalTransport http.RoundTripper
+}
+
+func (t *customTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Log cookies for debugging
+	if len(req.Cookies()) > 0 {
+		log.Printf("Request cookies: %v", req.Cookies())
+	}
+	
+	resp, err := t.originalTransport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Log response cookies for debugging
+	if len(resp.Cookies()) > 0 {
+		log.Printf("Response cookies: %v", resp.Cookies())
+	}
+	
+	return resp, err
 }
 
 func main() {
