@@ -1,0 +1,10 @@
+server:
+  port: 8080
+  host: "localhost"
+  
+logging:
+  level: "info"
+  
+metrics:
+  enabled: true
+  endpoint: "/metrics"
